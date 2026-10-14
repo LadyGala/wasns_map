@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NSWaS Map</title>
+    <title>WASNS Map</title>
     
+    <!-- Leaflet & PapaParse CDN -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
@@ -63,18 +64,20 @@
     <span id="load-status">Initializing...</span>
 </div>
 
+<!-- LIVE LOADING SCREEN -->
 <div id="loader">
     <div class="spinner"></div>
     <div id="loader-text">Connecting...</div>
 </div>
 
+<!-- 1. AUTH SCREEN -->
 <div id="password-overlay" class="overlay-bg">
     <div class="auth-box">
-        <h2 style="color: #2E7D32; margin-top: 0; margin-bottom: 25px;">NSWaS Map</h2>
+        <h2 style="color: #2E7D32; margin-top: 0; margin-bottom: 25px;">WASNS Map</h2>
         <input type="password" id="passInput" placeholder="Password" 
                style="width: 100%; padding: 10px; margin-bottom: 15px; text-align: center; border: 1px solid #ccc; border-radius: 5px;"
                onkeyup="if(event.key === 'Enter') checkPassword()">
-        <button onclick="checkPassword()" 
+        <button id="authBtn" onclick="checkPassword()" 
                 style="width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">
             Enter
         </button>
@@ -82,6 +85,7 @@
     </div>
 </div>
 
+<!-- 2. CONTACT BUTTON & FORM -->
 <div id="contact-btn" onclick="toggleContact()" title="Report Issue">✉️</div>
 
 <div id="contact-modal">
@@ -98,6 +102,7 @@
     </div>
 </div>
 
+<!-- 3. MAIN UI -->
 <div id="search-container">
     <input type="text" id="familySearch" list="familiesList" placeholder="Search name, lot, or any detail...">
     <datalist id="familiesList"></datalist>
@@ -105,86 +110,105 @@
 
 <div id="map"></div>
 
+<!-- MAIN SCRIPT -->
 <script>
-    const IMAGE_FILE = './map.jpg'; 
+    const IMAGE_FILE = 'map.jpg'; 
     const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSktZVDBT6mPlo8-DXyiQAEU0uT-XocjwQRNSxQ1PptsQSf59U2u9zIggzdB80xnc09nhaiVvJxlwld/pub?gid=0&single=true&output=csv';
-    
-    const PASSWORD = 'wasns';  
+    const PASSWORD = 'wasns1970';
     const SWAP_XY = true; 
     const SCALE = 1.0;    
 
-    const map = L.map('map', { crs: L.CRS.Simple, minZoom: -3 });
+    let leafletMap = null;
     let markers = []; 
 
     function updateStatus(msg) {
         const el = document.getElementById('load-status');
-        if(el) el.textContent = msg;
+        if (el) el.textContent = msg;
     }
 
     function toggleContact() {
         const modal = document.getElementById('contact-modal');
-        modal.style.display = (modal.style.display === 'flex') ? 'none' : 'flex';
+        if (modal) modal.style.display = (modal.style.display === 'flex') ? 'none' : 'flex';
     }
 
     function checkPassword() {
         const input = document.getElementById('passInput');
-        if (input.value.toLowerCase() === PASSWORD) {
+        if (!input) return;
+        if (input.value.toLowerCase().trim() === PASSWORD) {
             document.getElementById('password-overlay').style.display = 'none';
-            setTimeout(() => map.invalidateSize(), 300);
+            if (leafletMap && typeof leafletMap.invalidateSize === 'function') {
+                setTimeout(() => leafletMap.invalidateSize(), 300);
+            }
         } else {
             document.getElementById('error-msg').style.display = 'block';
             input.value = '';
         }
     }
 
-    const img = new Image();
-    img.src = IMAGE_FILE;
-    img.onload = function() {
-        const h = this.height, w = this.width;
-        const bounds = [[0, 0], [h, w]];
-        L.imageOverlay(IMAGE_FILE, bounds).addTo(map);
-        map.fitBounds(bounds);
-        loadData(h);
-    };
-    img.onerror = function() { updateStatus("Error: map.jpg missing"); };
+    function initMap() {
+        if (typeof L === 'undefined') {
+            updateStatus("Error: Leaflet library failed to load");
+            const loaderText = document.getElementById('loader-text');
+            if (loaderText) loaderText.textContent = "Error loading map library";
+            return;
+        }
+
+        leafletMap = L.map('map', { crs: L.CRS.Simple, minZoom: -3 });
+
+        const img = new Image();
+        img.src = IMAGE_FILE;
+        img.onload = function() {
+            const h = this.height, w = this.width;
+            const bounds = [[0, 0], [h, w]];
+            L.imageOverlay(IMAGE_FILE, bounds).addTo(leafletMap);
+            leafletMap.fitBounds(bounds);
+            loadData(h);
+        };
+        img.onerror = function() { 
+            updateStatus("Error: map.jpg missing");
+            const loader = document.getElementById('loader');
+            if (loader) loader.style.display = 'none';
+        };
+    }
 
     function loadData(imgHeight) {
         const freshURL = CSV_URL + "&t=" + Date.now();
-        document.getElementById('loader-text').textContent = "Downloading...";
-        
-        // We use a temporary array to batch process rows
-        // Note: 'step' function is slower than batch, but good for progress bars
-        // Since dataset is small, we process all at 'complete', but show fake status for UX
+        const loaderText = document.getElementById('loader-text');
+        if (loaderText) loaderText.textContent = "Downloading...";
         
         Papa.parse(freshURL, {
             download: true, header: true, skipEmptyLines: true,
             
-            // This 'step' function allows us to count rows as they come in!
             step: function(row, parser) {
-                // Only update DOM every 20 rows to keep it fast
-                if (markers.length % 20 === 0) {
-                     document.getElementById('loader-text').textContent = `Loaded ${markers.length} locations...`;
+                if (markers.length % 20 === 0 && loaderText) {
+                    loaderText.textContent = `Loaded ${markers.length} locations...`;
                 }
                 processRow(row.data, row.meta.fields, imgHeight);
             },
 
             complete: function() {
-                document.getElementById('loader-text').textContent = "Finalizing...";
+                if (loaderText) loaderText.textContent = "Finalizing...";
                 setTimeout(() => {
-                    document.getElementById('loader').style.display = 'none';
+                    const loader = document.getElementById('loader');
+                    if (loader) loader.style.display = 'none';
                     updateStatus(`Ready (${markers.length} locations)`);
-                    setTimeout(() => { document.getElementById('status-bar').style.display = 'none'; }, 3000);
+                    setTimeout(() => { 
+                        const statusBar = document.getElementById('status-bar');
+                        if (statusBar) statusBar.style.display = 'none'; 
+                    }, 3000);
                 }, 500);
             },
             error: function(e) { 
-                document.getElementById('loader').style.display = 'none';
+                const loader = document.getElementById('loader');
+                if (loader) loader.style.display = 'none';
                 updateStatus("Error: " + e); 
             }
         });
     }
 
     function processRow(row, headers, imgHeight) {
-        // Safe access to columns for Dropdown Label (A + C + E)
+        if (!row || !headers) return;
+
         const colA = row[headers[0]] || "";
         const colC = row[headers[2]] || "";
         const colE = row[headers[4]] || "";
@@ -207,12 +231,11 @@
                 radius: 12, 
                 color: 'white', weight: 1, opacity: 0.6, 
                 fillColor: '#2E7D32', fillOpacity: 0.2
-            }).addTo(map);
+            }).addTo(leafletMap);
 
             let tooltipHTML = '<div>';
             let searchableText = ""; 
             
-            // Build Tooltip & Search Text
             for(let i=0; i<Math.min(6, headers.length); i++) {
                 const key = headers[i];
                 const raw = row[key];
@@ -226,14 +249,10 @@
             }
             tooltipHTML += '</div>';
 
-            // --- DROPDOWN FORMATTING ---
-            // Format: "ColumnA ColumnC / ColumnE"
-            // We use simple check to avoid trailing " / " if empty
             let dropdownLabel = colA;
-            if(colC) dropdownLabel += " " + colC;
-            if(colE) dropdownLabel += " / " + colE;
+            if (colC) dropdownLabel += " " + colC;
+            if (colE) dropdownLabel += " / " + colE;
 
-            // Important: Add the dropdown label to searchableText so clicking it works!
             searchableText += " " + dropdownLabel; 
 
             marker.bindTooltip(tooltipHTML, { permanent: false, direction: 'auto', className: 'custom-tooltip' });
@@ -244,11 +263,11 @@
                 marker: marker 
             });
             
-            // Add to Datalist
-            if(colA) {
+            if (colA) {
                 const opt = document.createElement('option');
                 opt.value = dropdownLabel; 
-                document.getElementById('familiesList').appendChild(opt);
+                const list = document.getElementById('familiesList');
+                if (list) list.appendChild(opt);
             }
         }
     }
@@ -256,9 +275,6 @@
     document.getElementById('familySearch').addEventListener('input', function(e) {
         const val = e.target.value.toLowerCase().trim();
         let firstMatch = null;
-        
-        // Allow spaces and slashes now because the dropdown inserts them!
-        // We only strip special chars if we are detecting a pure number
         const isNumber = /^\d+$/.test(val);
         
         if (val === "" || (!isNumber && val.length < 3)) {
@@ -271,7 +287,6 @@
             if (isNumber) {
                 isMatch = m.colA.includes(val);
             } else {
-                // Use standard includes for text search
                 isMatch = m.text.includes(val);
             }
 
@@ -283,12 +298,18 @@
             }
         });
 
-        if (firstMatch) {
-            if (!map.getBounds().contains(firstMatch.marker.getLatLng())) {
-                map.panTo(firstMatch.marker.getLatLng());
+        if (firstMatch && leafletMap) {
+            if (!leafletMap.getBounds().contains(firstMatch.marker.getLatLng())) {
+                leafletMap.panTo(firstMatch.marker.getLatLng());
             }
         }
     });
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initMap);
+    } else {
+        initMap();
+    }
 </script>
 </body>
 </html>
