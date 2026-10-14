@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSWaS Map</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
+
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; font-family: system-ui, sans-serif; overflow: hidden; }
+        #map { height: calc(100% - 70px); width: 100%; background: #f0f0f0; }
+        #search-container { height: 70px; padding: 0 15px; display: flex; gap: 10px; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 1000; position: relative; align-items: center; }
+        input { padding: 12px; border: 2px solid #eee; border-radius: 8px; flex-grow: 1; font-size: 16px; outline: none; }
+        
+        /* AUTH & MODALS */
+        .overlay-bg { position: fixed; inset: 0; background: #fdfdfd; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        .auth-box { text-align: center; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); border: 1px solid #eee; min-width: 300px; }
+        
+        /* LOADING SPINNER */
+        #loader {
+            position: fixed; inset: 0; background: rgba(255,255,255,0.95); 
+            z-index: 9000; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+        }
+        .spinner {
+            width: 50px; height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #2E7D32; 
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 15px;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loader-text { color: #2E7D32; font-weight: bold; font-family: monospace; font-size: 16px; }
+
+        /* CONTACT BUTTON */
+        #contact-btn {
+            position: fixed; bottom: 20px; right: 20px;
+            background: #4CAF50; color: white;
+            width: 50px; height: 50px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            cursor: pointer; z-index: 8000; transition: transform 0.2s;
+        }
+        #contact-btn:hover { transform: scale(1.1); }
+
+        /* CONTACT FORM MODAL */
+        #contact-modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 9000; align-items: center; justify-content: center; }
+        .contact-box { background: white; width: 90%; max-width: 400px; padding: 25px; border-radius: 12px; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+        .close-btn { position: absolute; top: 10px; right: 15px; font-size: 24px; cursor: pointer; color: #666; }
+        textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; font-family: inherit; resize: vertical; box-sizing: border-box; }
+        
+        .custom-tooltip { background: white; border: 1px solid #2E7D32; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 14px; padding: 10px; text-align: left; white-space: nowrap; direction: ltr; }
+        #status-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #222; color: #fff; padding: 5px 10px; font-family: monospace; font-size: 11px; z-index: 2000; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+<div id="status-bar">
+    <span id="load-status">Initializing...</span>
+</div>
+
+<div id="loader">
+    <div class="spinner"></div>
+    <div id="loader-text">Connecting...</div>
+</div>
+
+<div id="password-overlay" class="overlay-bg">
+    <div class="auth-box">
+        <h2 style="color: #2E7D32; margin-top: 0; margin-bottom: 25px;">NSWaS Map</h2>
+        <input type="password" id="passInput" placeholder="Password" 
+               style="width: 100%; padding: 10px; margin-bottom: 15px; text-align: center; border: 1px solid #ccc; border-radius: 5px;"
+               onkeyup="if(event.key === 'Enter') checkPassword()">
+        <button onclick="checkPassword()" 
+                style="width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">
+            Enter
+        </button>
+        <p id="error-msg" style="color: red; display: none; margin-top: 15px; font-size: 14px;">Wrong password</p>
+    </div>
+</div>
+
+<div id="contact-btn" onclick="toggleContact()" title="Report Issue">✉️</div>
+
+<div id="contact-modal">
+    <div class="contact-box">
+        <span class="close-btn" onclick="toggleContact()">&times;</span>
+        <h3 style="margin-top: 0; color: #2E7D32;">Report Issue</h3>
+        <p style="font-size: 14px; color: #666;">Found an inaccuracy? Let us know.</p>
+        
+        <form action="https://formspree.io/f/mqedkyna" method="POST">
+            <input type="email" name="email" placeholder="Your Email (optional)" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; margin-bottom: 10px; box-sizing: border-box;">
+            <textarea name="message" placeholder="Describe the issue..." required></textarea>
+            <button type="submit" style="width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">Send Report</button>
+        </form>
+    </div>
+</div>
+
+<div id="search-container">
+    <input type="text" id="familySearch" list="familiesList" placeholder="Search name, lot, or any detail...">
+    <datalist id="familiesList"></datalist>
+</div>
+
+<div id="map"></div>
+
+<script>
+    const IMAGE_FILE = './map.jpg'; 
+    const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSktZVDBT6mPlo8-DXyiQAEU0uT-XocjwQRNSxQ1PptsQSf59U2u9zIggzdB80xnc09nhaiVvJxlwld/pub?gid=0&single=true&output=csv';
+    
+    const PASSWORD = 'wasns';  
+    const SWAP_XY = true; 
+    const SCALE = 1.0;    
+
+    const map = L.map('map', { crs: L.CRS.Simple, minZoom: -3 });
+    let markers = []; 
+
+    function updateStatus(msg) {
+        const el = document.getElementById('load-status');
+        if(el) el.textContent = msg;
+    }
+
+    function toggleContact() {
+        const modal = document.getElementById('contact-modal');
+        modal.style.display = (modal.style.display === 'flex') ? 'none' : 'flex';
+    }
+
+    function checkPassword() {
+        const input = document.getElementById('passInput');
+        if (input.value.toLowerCase() === PASSWORD) {
+            document.getElementById('password-overlay').style.display = 'none';
+            setTimeout(() => map.invalidateSize(), 300);
+        } else {
+            document.getElementById('error-msg').style.display = 'block';
+            input.value = '';
+        }
+    }
+
+    const img = new Image();
+    img.src = IMAGE_FILE;
+    img.onload = function() {
+        const h = this.height, w = this.width;
+        const bounds = [[0, 0], [h, w]];
+        L.imageOverlay(IMAGE_FILE, bounds).addTo(map);
+        map.fitBounds(bounds);
+        loadData(h);
+    };
+    img.onerror = function() { updateStatus("Error: map.jpg missing"); };
+
+    function loadData(imgHeight) {
+        const freshURL = CSV_URL + "&t=" + Date.now();
+        document.getElementById('loader-text').textContent = "Downloading...";
+        
+        // We use a temporary array to batch process rows
+        // Note: 'step' function is slower than batch, but good for progress bars
+        // Since dataset is small, we process all at 'complete', but show fake status for UX
+        
+        Papa.parse(freshURL, {
+            download: true, header: true, skipEmptyLines: true,
+            
+            // This 'step' function allows us to count rows as they come in!
+            step: function(row, parser) {
+                // Only update DOM every 20 rows to keep it fast
+                if (markers.length % 20 === 0) {
+                     document.getElementById('loader-text').textContent = `Loaded ${markers.length} locations...`;
+                }
+                processRow(row.data, row.meta.fields, imgHeight);
+            },
+
+            complete: function() {
+                document.getElementById('loader-text').textContent = "Finalizing...";
+                setTimeout(() => {
+                    document.getElementById('loader').style.display = 'none';
+                    updateStatus(`Ready (${markers.length} locations)`);
+                    setTimeout(() => { document.getElementById('status-bar').style.display = 'none'; }, 3000);
+                }, 500);
+            },
+            error: function(e) { 
+                document.getElementById('loader').style.display = 'none';
+                updateStatus("Error: " + e); 
+            }
+        });
+    }
+
+    function processRow(row, headers, imgHeight) {
+        // Safe access to columns for Dropdown Label (A + C + E)
+        const colA = row[headers[0]] || "";
+        const colC = row[headers[2]] || "";
+        const colE = row[headers[4]] || "";
+
+        const topKey = headers.find(h => { const c = h.toLowerCase().trim(); return c==='top'||c==='y'||c.includes('top'); });
+        const rightKey = headers.find(h => { const c = h.toLowerCase().trim(); return c==='right'||c==='x'||c.includes('right')||c.includes('left'); });
+
+        if (!topKey || !rightKey) return;
+
+        const cleanVal = (val) => parseFloat(String(val).replace(/[^0-9.-]/g, ''));
+        let valY = cleanVal(row[topKey]);
+        let valX = cleanVal(row[rightKey]);
+
+        if (SWAP_XY) { const temp = valX; valX = valY; valY = temp; }
+
+        if (!isNaN(valY) && !isNaN(valX)) {
+            valY = valY * SCALE; valX = valX * SCALE;
+            
+            const marker = L.circleMarker([imgHeight - valY, valX], {
+                radius: 12, 
+                color: 'white', weight: 1, opacity: 0.6, 
+                fillColor: '#2E7D32', fillOpacity: 0.2
+            }).addTo(map);
+
+            let tooltipHTML = '<div>';
+            let searchableText = ""; 
+            
+            // Build Tooltip & Search Text
+            for(let i=0; i<Math.min(6, headers.length); i++) {
+                const key = headers[i];
+                const raw = row[key];
+                if(raw && typeof raw === 'string') {
+                    const clean = raw.trim();
+                    if(clean !== "" && !clean.includes("#VALUE!") && !clean.includes("#N/A")) {
+                        tooltipHTML += `<b>${key}:</b> ${clean}<br>`;
+                        searchableText += clean + " ";
+                    }
+                }
+            }
+            tooltipHTML += '</div>';
+
+            // --- DROPDOWN FORMATTING ---
+            // Format: "ColumnA ColumnC / ColumnE"
+            // We use simple check to avoid trailing " / " if empty
+            let dropdownLabel = colA;
+            if(colC) dropdownLabel += " " + colC;
+            if(colE) dropdownLabel += " / " + colE;
+
+            // Important: Add the dropdown label to searchableText so clicking it works!
+            searchableText += " " + dropdownLabel; 
+
+            marker.bindTooltip(tooltipHTML, { permanent: false, direction: 'auto', className: 'custom-tooltip' });
+            
+            markers.push({ 
+                text: searchableText.toLowerCase(), 
+                colA: String(colA).toLowerCase().trim(),
+                marker: marker 
+            });
+            
+            // Add to Datalist
+            if(colA) {
+                const opt = document.createElement('option');
+                opt.value = dropdownLabel; 
+                document.getElementById('familiesList').appendChild(opt);
+            }
+        }
+    }
+
+    document.getElementById('familySearch').addEventListener('input', function(e) {
+        const val = e.target.value.toLowerCase().trim();
+        let firstMatch = null;
+        
+        // Allow spaces and slashes now because the dropdown inserts them!
+        // We only strip special chars if we are detecting a pure number
+        const isNumber = /^\d+$/.test(val);
+        
+        if (val === "" || (!isNumber && val.length < 3)) {
+            markers.forEach(m => m.marker.closeTooltip());
+            return;
+        }
+
+        markers.forEach(m => {
+            let isMatch = false;
+            if (isNumber) {
+                isMatch = m.colA.includes(val);
+            } else {
+                // Use standard includes for text search
+                isMatch = m.text.includes(val);
+            }
+
+            if (isMatch) {
+                m.marker.openTooltip();
+                if (!firstMatch) firstMatch = m;
+            } else {
+                m.marker.closeTooltip();
+            }
+        });
+
+        if (firstMatch) {
+            if (!map.getBounds().contains(firstMatch.marker.getLatLng())) {
+                map.panTo(firstMatch.marker.getLatLng());
+            }
+        }
+    });
+</script>
+</body>
+</html>
