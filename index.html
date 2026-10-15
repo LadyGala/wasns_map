@@ -10,12 +10,109 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
 
+    <!-- Early Global Definitions -->
+    <script>
+        var PASSWORD = 'wasns1970';
+        var leafletMap = null;
+        var initialBounds = null;
+        var hasUserInteracted = false;
+
+        function checkPassword() {
+            var input = document.getElementById('passInput');
+            if (!input) return;
+            if (input.value.toLowerCase().trim() === PASSWORD) {
+                input.blur();
+                document.getElementById('password-overlay').style.display = 'none';
+                if (leafletMap && typeof leafletMap.invalidateSize === 'function') {
+                    setTimeout(function() {
+                        leafletMap.invalidateSize({ pan: false });
+                        if (initialBounds && !hasUserInteracted) {
+                            leafletMap.fitBounds(initialBounds, { animate: false });
+                        }
+                    }, 250);
+                }
+            } else {
+                document.getElementById('error-msg').style.display = 'block';
+                input.value = '';
+            }
+        }
+
+        function toggleContact() {
+            var modal = document.getElementById('contact-modal');
+            if (modal) {
+                modal.style.display = (modal.style.display === 'flex') ? 'none' : 'flex';
+            }
+        }
+
+        function toggleLegend(e) {
+            if (e && e.stopPropagation) e.stopPropagation();
+            var pop = document.getElementById('legend-popover');
+            var dd = document.getElementById('search-dropdown');
+            if (dd) dd.style.display = 'none';
+            if (pop) {
+                pop.style.display = (pop.style.display === 'block') ? 'none' : 'block';
+            }
+        }
+    </script>
+
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; font-family: system-ui, sans-serif; overflow: hidden; }
+        body, html { margin: 0; padding: 0; height: 100%; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; }
         #map { height: calc(100% - 70px); width: 100%; background: #f0f0f0; }
         #search-container { height: 70px; padding: 0 15px; display: flex; gap: 10px; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 1000; position: relative; align-items: center; }
-        input { padding: 12px; border: 2px solid #eee; border-radius: 8px; flex-grow: 1; font-size: 16px; outline: none; }
         
+        /* CUSTOM SEARCH WRAPPER & DROPDOWN */
+        #search-box-wrapper { position: relative; flex-grow: 1; min-width: 0; display: flex; align-items: center; }
+        #familySearch { width: 100%; padding: 12px 38px 12px 12px; border: 2px solid #eee; border-radius: 8px; font-size: 16px; outline: none; box-sizing: border-box; direction: rtl; }
+        #familySearch:focus { border-color: #4CAF50; }
+        #clear-search-btn {
+            display: none; position: absolute; left: 10px; background: none; border: none;
+            font-size: 18px; color: #888; cursor: pointer; padding: 4px 8px; line-height: 1;
+        }
+        #clear-search-btn:hover { color: #333; }
+        #search-dropdown {
+            display: none; position: absolute; top: calc(100% + 6px); left: 0; right: 0;
+            background: #222; color: #fff; border-radius: 10px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.28); max-height: 260px; overflow-y: auto;
+            z-index: 3500; direction: rtl; text-align: right; padding: 6px 0;
+        }
+        .search-item {
+            padding: 10px 14px; font-size: 15px; cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.08); transition: background 0.15s;
+        }
+        .search-item:last-child { border-bottom: none; }
+        .search-item:hover, .search-item:active { background: #2E7D32; }
+        .search-item-extra { color: #FFD600; font-size: 13px; margin-right: 6px; }
+
+        /* LEGEND BUTTON & POPOVER */
+        #legend-wrapper { position: relative; flex-shrink: 0; }
+        #legend-btn {
+            padding: 10px 14px; background: #f8f9fa; color: #2E7D32;
+            border: 2px solid #2E7D32; border-radius: 8px; cursor: pointer;
+            font-weight: bold; font-size: 14px; display: flex; align-items: center; gap: 6px;
+            white-space: nowrap; transition: background 0.2s;
+        }
+        #legend-btn:hover { background: #e8f5e9; }
+        #legend-popover {
+            display: none; position: absolute; top: calc(100% + 10px); right: 0;
+            background: #fff; border: 1px solid #ddd; border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.18); padding: 14px 16px;
+            z-index: 3000; min-width: 290px; direction: rtl;
+        }
+        .legend-title {
+            font-weight: bold; color: #2E7D32; font-size: 15px;
+            margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid #eee;
+            display: flex; justify-content: space-between;
+        }
+        .legend-item {
+            display: flex; align-items: center; gap: 12px; padding: 6px 0;
+            border-bottom: 1px solid #f5f5f5; font-size: 14px; color: #333;
+        }
+        .legend-item:last-child { border-bottom: none; }
+        .legend-icon { width: 34px; height: 34px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+        .legend-icon img, .legend-icon svg { width: 32px; height: 32px; object-fit: contain; border-radius: 4px; }
+        .legend-labels { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; line-height: 1.3; }
+        .legend-sep { color: #999; }
+
         /* AUTH & MODALS */
         .overlay-bg { position: fixed; inset: 0; background: #fdfdfd; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; }
         .auth-box { text-align: center; background: white; padding: 40px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); border: 1px solid #eee; min-width: 300px; }
@@ -54,7 +151,18 @@
         .close-btn { position: absolute; top: 10px; right: 15px; font-size: 24px; cursor: pointer; color: #666; }
         textarea { width: 100%; height: 100px; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 5px; font-family: inherit; resize: vertical; box-sizing: border-box; }
         
-        .custom-tooltip { background: white; border: 1px solid #2E7D32; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.2); font-size: 14px; padding: 10px; text-align: left; white-space: nowrap; direction: ltr; }
+        /* INTERACTIVE TOOLTIP BUBBLES */
+        .custom-tooltip {
+            background: white; border: 2px solid #2E7D32; border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25); font-size: 14px; padding: 8px 12px;
+            text-align: right; white-space: nowrap; direction: rtl;
+            pointer-events: auto !important; cursor: pointer;
+        }
+        .custom-tooltip:hover {
+            box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+            border-color: #FF6D00;
+        }
+
         #status-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #222; color: #fff; padding: 5px 10px; font-family: monospace; font-size: 11px; z-index: 2000; display: flex; justify-content: space-between; }
     </style>
 </head>
@@ -75,7 +183,7 @@
     <div class="auth-box">
         <h2 style="color: #2E7D32; margin-top: 0; margin-bottom: 25px;">WASNS Map</h2>
         <input type="password" id="passInput" placeholder="Password" 
-               style="width: 100%; padding: 10px; margin-bottom: 15px; text-align: center; border: 1px solid #ccc; border-radius: 5px;"
+               style="width: 100%; padding: 10px; margin-bottom: 15px; text-align: center; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box;"
                onkeyup="if(event.key === 'Enter') checkPassword()">
         <button id="authBtn" onclick="checkPassword()" 
                 style="width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">
@@ -102,10 +210,90 @@
     </div>
 </div>
 
-<!-- 3. MAIN UI -->
+<!-- 3. MAIN UI: SEARCH + LEGEND -->
 <div id="search-container">
-    <input type="text" id="familySearch" list="familiesList" placeholder="Search name, lot, or any detail...">
-    <datalist id="familiesList"></datalist>
+    <div id="search-box-wrapper" onclick="event.stopPropagation()">
+        <input type="text" id="familySearch" autocomplete="off" enterkeyhint="search" placeholder="Search name, lot, or any detail...">
+        <button id="clear-search-btn" type="button" title="Clear" onclick="clearSearch()">✕</button>
+        <div id="search-dropdown"></div>
+    </div>
+
+    <div id="legend-wrapper">
+        <button id="legend-btn" type="button" onclick="toggleLegend(event)">
+            <span>מקרא / مفتاح</span>
+        </button>
+        <div id="legend-popover" onclick="event.stopPropagation()">
+            <div class="legend-title">
+                <span>מקרא</span>
+                <span>مفتاح الخريطة</span>
+            </div>
+
+            <!-- חניה ציבורית -->
+            <div class="legend-item">
+                <div class="legend-icon">
+                    <img src="חניה ציבורית.jpg" alt="P" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <svg style="display:none" viewBox="0 0 36 36"><circle cx="18" cy="18" r="17" fill="#1a1a1a"/><text x="18" y="25" text-anchor="middle" fill="#fff" font-size="22" font-weight="bold" font-family="sans-serif">P</text></svg>
+                </div>
+                <div class="legend-labels">
+                    <strong>חניה ציבורית</strong>
+                    <span class="legend-sep">/</span>
+                    <span>موقف سيارات عام</span>
+                </div>
+            </div>
+
+            <!-- ציוד כיבוי אש -->
+            <div class="legend-item">
+                <div class="legend-icon">
+                    <img src="ציוד כיבוי אש.jpg" alt="Fire Equipment" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <svg style="display:none" viewBox="0 0 36 36"><path d="M11 14 V11 A7 7 0 0 1 25 11 V14" fill="none" stroke="#e60000" stroke-width="4" stroke-linecap="round"/><rect x="4" y="13" width="28" height="19" rx="4" fill="#e60000" stroke="#000" stroke-width="2"/><path d="M18 17 C15 21 14 24 16 28 C18 30 21 29 21 25 C21 22 19 20 18 17 Z" fill="#000"/></svg>
+                </div>
+                <div class="legend-labels">
+                    <strong>ציוד כיבוי אש</strong>
+                    <span class="legend-sep">/</span>
+                    <span>معدات إطفاء الحريق</span>
+                </div>
+            </div>
+
+            <!-- ברז כיבוי אש -->
+            <div class="legend-item">
+                <div class="legend-icon">
+                    <img src="ברז כיבוי אש.jpg" alt="Fire Hydrant" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <svg style="display:none" viewBox="0 0 36 36"><path d="M12 10 A6 6 0 0 1 24 10 Z" fill="#ff3300" stroke="#000" stroke-width="2"/><rect x="11" y="12" width="14" height="18" fill="#ff3300" stroke="#000" stroke-width="2"/><rect x="7" y="16" width="4" height="6" fill="#ff3300" stroke="#000" stroke-width="2"/><rect x="25" y="16" width="4" height="6" fill="#ff3300" stroke="#000" stroke-width="2"/><rect x="9" y="30" width="18" height="4" fill="#ff3300" stroke="#000" stroke-width="2"/><circle cx="18" cy="20" r="3" fill="#fff" stroke="#000" stroke-width="1.5"/></svg>
+                </div>
+                <div class="legend-labels">
+                    <strong>ברז כיבוי אש</strong>
+                    <span class="legend-sep">/</span>
+                    <span>صنبور إطفاء الحريق</span>
+                </div>
+            </div>
+
+            <!-- מקלט -->
+            <div class="legend-item">
+                <div class="legend-icon">
+                    <img src="מקלט.jpg" alt="Shelter" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <svg style="display:none" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="#fff" stroke="#000" stroke-width="2"/><circle cx="18" cy="18" r="13" fill="#b71c1c"/><polygon points="9,18 15,11 15,25" fill="#fff"/><circle cx="21" cy="12" r="2.2" fill="#fff"/><path d="M17 17 L21 15 L24 19 L21 25 M19 20 L16 25" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+                </div>
+                <div class="legend-labels">
+                    <strong>מקלט</strong>
+                    <span class="legend-sep">/</span>
+                    <span>ملجأ</span>
+                </div>
+            </div>
+
+            <!-- פינת גזם -->
+            <div class="legend-item">
+                <div class="legend-icon">
+                    <img src="פינת גזם.jpg" alt="Pruning Waste" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+                    <svg style="display:none" viewBox="0 0 36 36"><circle cx="18" cy="18" r="16" fill="#fff" stroke="#008a2e" stroke-width="4"/><path d="M8 22 L13 22 L13 18" stroke="#795548" stroke-width="2.5" fill="none"/><polygon points="14,14 29,20 14,24" fill="#1b5e20"/></svg>
+                </div>
+                <div class="legend-labels">
+                    <strong>פינת גזם</strong>
+                    <span class="legend-sep">/</span>
+                    <span>نقطة تجميع مخلفات التقليم</span>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <div id="map"></div>
@@ -114,11 +302,27 @@
 <script>
     const IMAGE_FILE = 'map.jpg'; 
     const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vSktZVDBT6mPlo8-DXyiQAEU0uT-XocjwQRNSxQ1PptsQSf59U2u9zIggzdB80xnc09nhaiVvJxlwld/pub?gid=0&single=true&output=csv';
-    const PASSWORD = 'wasns1970';
     const SWAP_XY = true; 
     const SCALE = 1.0;    
 
-    let leafletMap = null;
+    const DEFAULT_STYLE = {
+        radius: 12,
+        color: 'white',
+        weight: 1,
+        opacity: 0.6,
+        fillColor: '#2E7D32',
+        fillOpacity: 0.2
+    };
+
+    const HIGHLIGHT_STYLE = {
+        radius: 14,
+        color: '#FFD600',
+        weight: 3,
+        opacity: 1.0,
+        fillColor: '#FF6D00',
+        fillOpacity: 0.55
+    };
+
     let markers = []; 
 
     function updateStatus(msg) {
@@ -126,22 +330,165 @@
         if (el) el.textContent = msg;
     }
 
-    function toggleContact() {
-        const modal = document.getElementById('contact-modal');
-        if (modal) modal.style.display = (modal.style.display === 'flex') ? 'none' : 'flex';
+    // Close legend and search dropdown when clicking outside
+    document.addEventListener('click', function() {
+        const pop = document.getElementById('legend-popover');
+        if (pop && pop.style.display === 'block') {
+            pop.style.display = 'none';
+        }
+        const dd = document.getElementById('search-dropdown');
+        if (dd && dd.style.display === 'block') {
+            dd.style.display = 'none';
+        }
+    });
+
+    // Strict word-start matcher: matches start of word or Hebrew/Arabic 'and' prefix (ו / و)
+    function textMatchesToken(textStr, token) {
+        const words = textStr.toLowerCase().split(/[\s,/()\-–—:;|+"'`]+/);
+        for (let i = 0; i < words.length; i++) {
+            const w = words[i];
+            if (!w) continue;
+            if (w.indexOf(token) === 0 || w.indexOf('ו' + token) === 0 || w.indexOf('و' + token) === 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
-    function checkPassword() {
-        const input = document.getElementById('passInput');
-        if (!input) return;
-        if (input.value.toLowerCase().trim() === PASSWORD) {
-            document.getElementById('password-overlay').style.display = 'none';
-            if (leafletMap && typeof leafletMap.invalidateSize === 'function') {
-                setTimeout(() => leafletMap.invalidateSize(), 300);
+    function markerMatchesQuery(mObj, queryVal, isNumber) {
+        if (isNumber) {
+            const colWords = mObj.colA.split(/[\s,/()\-–—:;|+]+/);
+            for (let i = 0; i < colWords.length; i++) {
+                if (colWords[i] === queryVal || colWords[i].indexOf(queryVal) === 0) {
+                    return true;
+                }
             }
+            return false;
+        }
+        const qTokens = queryVal.split(/[\s,/()\-–—:;|]+/).filter(Boolean);
+        if (qTokens.length === 0) return false;
+        for (let j = 0; j < qTokens.length; j++) {
+            if (!textMatchesToken(mObj.text, qTokens[j])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function renderSearchDropdown(matchedList, queryVal, isNumber) {
+        const dd = document.getElementById('search-dropdown');
+        if (!dd) return;
+        dd.innerHTML = '';
+
+        if (!matchedList || matchedList.length === 0) {
+            dd.style.display = 'none';
+            return;
+        }
+
+        const qTokens = queryVal.split(/[\s,/()\-–—:;|]+/).filter(Boolean);
+
+        matchedList.forEach(function(m) {
+            const item = document.createElement('div');
+            item.className = 'search-item';
+
+            let mainText = m.baseDropdownLabel;
+            let extraNote = '';
+
+            const baseMatchesAll = isNumber || qTokens.every(function(qt) {
+                return textMatchesToken(m.baseDropdownLabel, qt);
+            });
+
+            if (!baseMatchesAll) {
+                const matchedExtra = m.extraFields.find(function(f) {
+                    return qTokens.some(function(qt) { return textMatchesToken(f, qt); });
+                });
+                if (matchedExtra) {
+                    extraNote = matchedExtra;
+                }
+            }
+
+            item.textContent = mainText;
+            if (extraNote) {
+                const span = document.createElement('span');
+                span.className = 'search-item-extra';
+                span.textContent = ' (' + extraNote + ')';
+                item.appendChild(span);
+            }
+
+            item.addEventListener('click', function(ev) {
+                ev.stopPropagation();
+                const input = document.getElementById('familySearch');
+                if (input) {
+                    input.value = mainText;
+                    input.blur();
+                }
+                dd.style.display = 'none';
+                focusSingleMarker(m);
+            });
+
+            dd.appendChild(item);
+        });
+
+        dd.style.display = 'block';
+    }
+
+    function clearSearch() {
+        const input = document.getElementById('familySearch');
+        const clearBtn = document.getElementById('clear-search-btn');
+        const dd = document.getElementById('search-dropdown');
+        if (input) input.value = '';
+        if (clearBtn) clearBtn.style.display = 'none';
+        if (dd) dd.style.display = 'none';
+        markers.forEach(function(m) {
+            m.marker.closeTooltip();
+            setMarkerHighlight(m, false);
+        });
+    }
+    window.clearSearch = clearSearch;
+
+    function setMarkerHighlight(mObj, isHighlighted) {
+        if (!mObj || !mObj.marker) return;
+        if (isHighlighted) {
+            mObj.marker.setStyle(HIGHLIGHT_STYLE);
+            mObj.marker.bringToFront();
         } else {
-            document.getElementById('error-msg').style.display = 'block';
-            input.value = '';
+            mObj.marker.setStyle(DEFAULT_STYLE);
+        }
+    }
+
+    function getOpenMarkers() {
+        return markers.filter(function(m) { return m.marker.isTooltipOpen(); });
+    }
+
+    function focusSingleMarker(targetObj) {
+        markers.forEach(function(m) {
+            if (m !== targetObj) {
+                m.marker.closeTooltip();
+                setMarkerHighlight(m, false);
+            }
+        });
+        targetObj.marker.openTooltip();
+        setMarkerHighlight(targetObj, true);
+        if (leafletMap) {
+            leafletMap.panTo(targetObj.marker.getLatLng(), { animate: true });
+        }
+    }
+
+    function handleMarkerOrBubbleClick(targetObj) {
+        hasUserInteracted = true;
+        const dd = document.getElementById('search-dropdown');
+        if (dd) dd.style.display = 'none';
+
+        const openList = getOpenMarkers();
+        const isCurrentlyOpen = targetObj.marker.isTooltipOpen();
+
+        if (openList.length > 1) {
+            focusSingleMarker(targetObj);
+        } else if (isCurrentlyOpen) {
+            targetObj.marker.closeTooltip();
+            setMarkerHighlight(targetObj, false);
+        } else {
+            focusSingleMarker(targetObj);
         }
     }
 
@@ -153,15 +500,24 @@
             return;
         }
 
-        leafletMap = L.map('map', { crs: L.CRS.Simple, minZoom: -3 });
+        leafletMap = L.map('map', { crs: L.CRS.Simple, minZoom: -3, zoomSnap: 0, zoomDelta: 0.25 });
+
+        leafletMap.on('dragstart zoomstart', function() {
+            hasUserInteracted = true;
+        });
 
         const img = new Image();
         img.src = IMAGE_FILE;
         img.onload = function() {
-            const h = this.height, w = this.width;
+            const h = this.naturalHeight || this.height;
+            const w = this.naturalWidth || this.width;
             const bounds = [[0, 0], [h, w]];
             L.imageOverlay(IMAGE_FILE, bounds).addTo(leafletMap);
-            leafletMap.fitBounds(bounds);
+
+            // 10% closer zoom, anchored to top-left corner (where the WASNS banner is)
+            initialBounds = [[h * 0.10, 0], [h, w * 0.90]];
+            leafletMap.fitBounds(initialBounds, { animate: false });
+
             loadData(h);
         };
         img.onerror = function() { 
@@ -188,11 +544,11 @@
 
             complete: function() {
                 if (loaderText) loaderText.textContent = "Finalizing...";
-                setTimeout(() => {
+                setTimeout(function() {
                     const loader = document.getElementById('loader');
                     if (loader) loader.style.display = 'none';
                     updateStatus(`Ready (${markers.length} locations)`);
-                    setTimeout(() => { 
+                    setTimeout(function() { 
                         const statusBar = document.getElementById('status-bar');
                         if (statusBar) statusBar.style.display = 'none'; 
                     }, 3000);
@@ -209,16 +565,16 @@
     function processRow(row, headers, imgHeight) {
         if (!row || !headers) return;
 
-        const colA = row[headers[0]] || "";
-        const colC = row[headers[2]] || "";
-        const colE = row[headers[4]] || "";
+        const colA = (row[headers[0]] || "").trim();
+        const colC = (row[headers[2]] || "").trim();
+        const colE = (row[headers[4]] || "").trim();
 
-        const topKey = headers.find(h => { const c = h.toLowerCase().trim(); return c==='top'||c==='y'||c.includes('top'); });
-        const rightKey = headers.find(h => { const c = h.toLowerCase().trim(); return c==='right'||c==='x'||c.includes('right')||c.includes('left'); });
+        const topKey = headers.find(function(h) { const c = h.toLowerCase().trim(); return c==='top'||c==='y'||c.includes('top'); });
+        const rightKey = headers.find(function(h) { const c = h.toLowerCase().trim(); return c==='right'||c==='x'||c.includes('right')||c.includes('left'); });
 
         if (!topKey || !rightKey) return;
 
-        const cleanVal = (val) => parseFloat(String(val).replace(/[^0-9.-]/g, ''));
+        const cleanVal = function(val) { return parseFloat(String(val).replace(/[^0-9.-]/g, '')); };
         let valY = cleanVal(row[topKey]);
         let valX = cleanVal(row[rightKey]);
 
@@ -227,76 +583,130 @@
         if (!isNaN(valY) && !isNaN(valX)) {
             valY = valY * SCALE; valX = valX * SCALE;
             
-            const marker = L.circleMarker([imgHeight - valY, valX], {
-                radius: 12, 
-                color: 'white', weight: 1, opacity: 0.6, 
-                fillColor: '#2E7D32', fillOpacity: 0.2
-            }).addTo(leafletMap);
+            const marker = L.circleMarker([imgHeight - valY, valX], DEFAULT_STYLE).addTo(leafletMap);
 
             let tooltipHTML = '<div>';
             let searchableText = ""; 
+            let extraFields = [];
             
-            for(let i=0; i<Math.min(6, headers.length); i++) {
+            for (let i = 0; i < Math.min(6, headers.length); i++) {
                 const key = headers[i];
                 const raw = row[key];
-                if(raw && typeof raw === 'string') {
+                if (raw && typeof raw === 'string') {
                     const clean = raw.trim();
-                    if(clean !== "" && !clean.includes("#VALUE!") && !clean.includes("#N/A")) {
+                    if (clean !== "" && !clean.includes("#VALUE!") && !clean.includes("#N/A")) {
                         tooltipHTML += `<b>${key}:</b> ${clean}<br>`;
                         searchableText += clean + " ";
+                        if (i !== 0 && i !== 2 && i !== 4) {
+                            extraFields.push(clean);
+                        }
                     }
                 }
             }
             tooltipHTML += '</div>';
 
-            let dropdownLabel = colA;
-            if (colC) dropdownLabel += " " + colC;
-            if (colE) dropdownLabel += " / " + colE;
+            let baseDropdownLabel = colA;
+            if (colC) baseDropdownLabel += " " + colC;
+            if (colE) baseDropdownLabel += " / " + colE;
 
-            searchableText += " " + dropdownLabel; 
+            searchableText += " " + baseDropdownLabel; 
 
-            marker.bindTooltip(tooltipHTML, { permanent: false, direction: 'auto', className: 'custom-tooltip' });
-            
-            markers.push({ 
+            // Open bubble below marker if it's near the top edge of the map so the search bar doesn't cut it off
+            const isNearTop = (valY < imgHeight * 0.25);
+            const tipDirection = isNearTop ? 'bottom' : 'top';
+            const tipOffset = isNearTop ? [0, 14] : [0, -14];
+
+            marker.bindTooltip(tooltipHTML, {
+                permanent: false,
+                direction: tipDirection,
+                offset: tipOffset,
+                interactive: true,
+                className: 'custom-tooltip'
+            });
+
+            const mObj = { 
                 text: searchableText.toLowerCase(), 
                 colA: String(colA).toLowerCase().trim(),
+                baseDropdownLabel: baseDropdownLabel,
+                extraFields: extraFields,
                 marker: marker 
+            };
+            markers.push(mObj);
+
+            marker.off('click');
+            marker.on('click', function(e) {
+                L.DomEvent.stopPropagation(e);
+                handleMarkerOrBubbleClick(mObj);
             });
-            
-            if (colA) {
-                const opt = document.createElement('option');
-                opt.value = dropdownLabel; 
-                const list = document.getElementById('familiesList');
-                if (list) list.appendChild(opt);
-            }
+
+            marker.on('tooltipopen', function(e) {
+                setMarkerHighlight(mObj, true);
+                const tipEl = e.tooltip.getElement();
+                if (tipEl && !tipEl._hasClickHandler) {
+                    tipEl._hasClickHandler = true;
+                    tipEl.addEventListener('click', function(ev) {
+                        ev.stopPropagation();
+                        handleMarkerOrBubbleClick(mObj);
+                    });
+                }
+            });
+
+            marker.on('tooltipclose', function() {
+                setMarkerHighlight(mObj, false);
+            });
         }
     }
 
-    document.getElementById('familySearch').addEventListener('input', function(e) {
+    const searchInput = document.getElementById('familySearch');
+    const clearBtn = document.getElementById('clear-search-btn');
+
+    // Hide mobile keyboard and dropdown on Enter
+    searchInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.keyCode === 13) {
+            e.preventDefault();
+            const dd = document.getElementById('search-dropdown');
+            if (dd) dd.style.display = 'none';
+            this.blur();
+        }
+    });
+
+    searchInput.addEventListener('input', function(e) {
+        hasUserInteracted = true;
         const val = e.target.value.toLowerCase().trim();
-        let firstMatch = null;
         const isNumber = /^\d+$/.test(val);
-        
+
+        if (clearBtn) {
+            clearBtn.style.display = (val.length > 0) ? 'block' : 'none';
+        }
+
         if (val === "" || (!isNumber && val.length < 3)) {
-            markers.forEach(m => m.marker.closeTooltip());
+            const dd = document.getElementById('search-dropdown');
+            if (dd) dd.style.display = 'none';
+            markers.forEach(function(m) {
+                m.marker.closeTooltip();
+                setMarkerHighlight(m, false);
+            });
             return;
         }
 
-        markers.forEach(m => {
-            let isMatch = false;
-            if (isNumber) {
-                isMatch = m.colA.includes(val);
-            } else {
-                isMatch = m.text.includes(val);
-            }
+        let firstMatch = null;
+        let matchedList = [];
+
+        markers.forEach(function(m) {
+            const isMatch = markerMatchesQuery(m, val, isNumber);
 
             if (isMatch) {
+                matchedList.push(m);
                 m.marker.openTooltip();
+                setMarkerHighlight(m, true);
                 if (!firstMatch) firstMatch = m;
             } else {
                 m.marker.closeTooltip();
+                setMarkerHighlight(m, false);
             }
         });
+
+        renderSearchDropdown(matchedList, val, isNumber);
 
         if (firstMatch && leafletMap) {
             if (!leafletMap.getBounds().contains(firstMatch.marker.getLatLng())) {
